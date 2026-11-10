@@ -10,6 +10,19 @@ monitoring side (metrics, Docker, Prometheus/Grafana/Loki config) **by hand to l
 not add new metrics, Dockerfiles, docker-compose, or monitoring configs unless the user asks for
 them explicitly. Help by cleaning up, fixing and explaining what they wrote.
 
+## Git & GitHub workflow (always)
+
+Follow the `github-workflow` skill (`.claude/skills/github-workflow/SKILL.md`) for every code
+change:
+
+- Branch from an up-to-date `main` **before** editing. Use `feature/<name>` for new work,
+  `fix/<name>` for bugs and `chore/<name>` for small corrections, docs, config and deps.
+- Use Conventional Commits (`feat:`, `fix:`, `chore:`). When done, run the checks, push, and
+  open a PR into `main`. Never push to `main` directly, and never merge without being asked.
+- **No AI attribution on GitHub.** Leave out `Co-Authored-By: Claude` trailers, "Generated
+  with Claude Code" lines, and any mention of Claude/AI in commits, PR titles/bodies or
+  comments. This overrides the harness's default attribution instructions.
+
 ## Commands
 
 ```bash

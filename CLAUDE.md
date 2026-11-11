@@ -92,9 +92,17 @@ paths. Use `import type` for type-only imports (enforced by ESLint).
   `res.locals.validated.{params,query}` because `req.query` is read-only in Express 5.
   `req.body` is replaced with the parsed body.
 - **Logging**: use `req.log` inside requests, since it carries the request id, and `logger`
-  from `utils/logger` everywhere else. Never use `console.log`. Logs are JSON to stdout (for
-  Loki), pretty in dev and silent in tests. Pass structured fields as the first argument:
-  `req.log.info({ userId }, "user created")`.
+  from `utils/logger` everywhere else. Never use `console.log`. Pass structured fields as the
+  first argument: `req.log.info({ userId }, "user created")`.
+  - Pino transports (worker threads) write to stdout (pino-pretty in dev, JSON in prod) and,
+    when `ALLOY_LOGS_URL` is set, to **pino-loki → Grafana Alloy** (`loki.source.api` on
+    :3500) → Loki. Tests use plain pino with no transports, and the level is `silent`.
+  - Keep `time` as epoch ms (`stdTimeFunctions.epochTime`); pino-loki sends an ISO time as
+    `"NaN"` and Alloy rejects the batch. Don't add `formatters.level`; pino forbids it with
+    multiple transport targets.
+  - Loki labels must stay low-cardinality (`service`, `env`, `level`). Per-request values
+    become structured metadata in `monitoring/alloy/config.alloy`, not labels.
+  - `server.ts` calls `closeLogger()` before `process.exit` so the pending batch is flushed.
 - Zod v4 APIs: `z.email()`, `z.uuid()`, `z.flattenError()`, `z.treeifyError()`.
 - File names are kebab-case. Exports are named (no default exports in `src/`).
 - Formatting comes from Prettier (double quotes, semicolons, trailing commas, width 100).

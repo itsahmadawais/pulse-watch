@@ -7,8 +7,8 @@ The app is a small, production-style REST API that also has **simulation endpoin
 use them to generate latency, errors, CPU load and log volume on demand, so dashboards and
 alerts have real signals to show.
 
-> Status: the application baseline and the `/metrics` endpoint (default Node.js metrics) are done.
-> Custom HTTP metrics, the monitoring stack and Docker are not set up yet.
+> Status: the app, the `/metrics` endpoint and the local monitoring stack (Prometheus, Grafana,
+> Loki, Alloy) are running. Custom HTTP metrics, dashboards and alerts are still to do.
 
 ## Tech stack
 
@@ -18,7 +18,7 @@ alerts have real signals to show.
 | Language      | TypeScript 6 (strict), compiled to CommonJS       |
 | HTTP          | Express 5 (async errors handled natively)         |
 | Validation    | Zod 4                                             |
-| Logging       | Pino (JSON to stdout) + pino-http access logs     |
+| Logging       | Pino + pino-http, shipped via pino-loki → Alloy   |
 | Metrics       | @prometheus-io/client (dedicated registry)        |
 | Security      | helmet, cors                                      |
 | Testing       | Vitest + Supertest                                |
@@ -51,17 +51,19 @@ The server listens on `http://localhost:3000` by default.
 Settings come from environment variables (loaded from `.env` by `dotenv`) and are checked at
 startup by `src/config/env.ts`. If any value is invalid, the process exits immediately.
 
-| Variable              | Default         | Description                                            |
-| --------------------- | --------------- | ------------------------------------------------------ |
-| `NODE_ENV`            | `development`   | `development` / `test` / `production`                  |
-| `APP_NAME`            | `pulse-watch`   | Added as `service` to every log line                   |
-| `APP_VERSION`         | package version | Added as `version` to every log line                   |
-| `HOST`                | `0.0.0.0`       | Bind address                                           |
-| `PORT`                | `3000`          | HTTP port                                              |
-| `LOG_LEVEL`           | `info`          | `fatal` `error` `warn` `info` `debug` `trace` `silent` |
-| `CORS_ORIGIN`         | `*`             | `*` or a comma-separated list of origins               |
-| `SHUTDOWN_TIMEOUT_MS` | `10000`         | Graceful shutdown deadline before forced exit          |
-| `METRICS_PREFIX`      | _(empty)_       | Prefix for default metric names, e.g. `pulse_watch_`   |
+| Variable                      | Default         | Description                                                           |
+| ----------------------------- | --------------- | --------------------------------------------------------------------- |
+| `NODE_ENV`                    | `development`   | `development` / `test` / `production`                                 |
+| `APP_NAME`                    | `pulse-watch`   | Added as `service` to every log line                                  |
+| `APP_VERSION`                 | package version | Added as `version` to every log line                                  |
+| `HOST`                        | `0.0.0.0`       | Bind address                                                          |
+| `PORT`                        | `3000`          | HTTP port                                                             |
+| `LOG_LEVEL`                   | `info`          | `fatal` `error` `warn` `info` `debug` `trace` `silent`                |
+| `CORS_ORIGIN`                 | `*`             | `*` or a comma-separated list of origins                              |
+| `SHUTDOWN_TIMEOUT_MS`         | `10000`         | Graceful shutdown deadline before forced exit                         |
+| `METRICS_PREFIX`              | _(empty)_       | Prefix for default metric names, e.g. `pulse_watch_`                  |
+| `ALLOY_LOGS_URL`              | _(empty)_       | Alloy log receiver, e.g. `http://localhost:3500`; empty = stdout only |
+| `ALLOY_LOGS_BATCH_INTERVAL_S` | `2`             | How often batched logs are pushed to Alloy (seconds)                  |
 
 ## API
 
@@ -114,16 +116,42 @@ Every error has the same shape:
 
 ## Logging
 
-- Logs are written to stdout, one JSON object per line. `pino-pretty` formats them only in
-  development.
-- Every line includes `service`, `version`, `env`, `level` (as a string) and an ISO `time`.
+```
+Node app (pino) ──► stdout (pretty in dev, JSON in prod)
+        └── pino-loki ──HTTP push──► Alloy :3500 (loki.source.api → loki.process) ──► Loki :3100 ──► Grafana
+```
+
+- Both destinations run in pino worker threads, so log I/O doesn't block the event loop.
+  Shipping to Alloy is turned on by setting `ALLOY_LOGS_URL`. Logs are batched every
+  `ALLOY_LOGS_BATCH_INTERVAL_S` seconds and flushed on graceful shutdown. If Alloy is down,
+  the push fails silently and stdout keeps working.
+- **Loki labels** (indexed, low-cardinality): `service`, `env`, `level`, `collector`.
+- **Structured metadata** (added by Alloy, queryable but not indexed): `request_id`, `method`,
+  `status_code`.
+- Every JSON line includes `service`, `version` and `env`, a numeric `level` (30 = info,
+  40 = warn, 50 = error) and `time` in epoch milliseconds. pino-loki needs this format.
 - Each request gets an id (the incoming `x-request-id` is reused if present). The id is sent back
   in the `x-request-id` header and appears in the logs as `req.id`.
 - One access log line is written per request. Its level depends on the status code: `info` below
   400, `warn` for 4xx, `error` for 5xx. Requests to `/health/*` and `/metrics` are not logged.
 
-With this format, Loki can parse the logs using `| json` and filter by `level`, `service` or
-`req.id`.
+Example LogQL queries in Grafana → Explore → Loki:
+
+```logql
+{service="pulse-watch", level="error"}
+{service="pulse-watch"} | request_id="<x-request-id value>"
+{service="pulse-watch"} | json | res_statusCode >= 500
+sum by (level) (count_over_time({service="pulse-watch"}[5m]))
+```
+
+### Running the monitoring stack
+
+```bash
+docker compose up -d       # Prometheus :9090, Grafana :3001, Loki :3100, Alloy UI :12345
+npm run dev                # with ALLOY_LOGS_URL=http://localhost:3500 in .env
+```
+
+In Grafana, add a Loki data source with URL `http://loki:3100`.
 
 ## Project structure
 
@@ -144,12 +172,18 @@ src/
 └── utils/                 # logger, AppError, sleep
 tests/
 └── integration/           # Supertest against createApp()
+monitoring/
+├── prometheus/            # prometheus.yaml (scrape config), alerts.yaml
+├── loki/                  # loki-config.yaml
+└── alloy/                 # config.alloy (log pipeline: receive → process → write)
 ```
 
 ## Roadmap (monitoring work)
 
 - [x] `/metrics` endpoint with default Node.js metrics
 - [ ] Custom HTTP metrics (request count / duration histogram)
-- [ ] Dockerfile + docker-compose (app, Prometheus, Grafana, Loki, log shipper)
+- [x] docker-compose: Prometheus, Grafana, Loki, Alloy
+- [x] Log shipping: pino-loki → Alloy → Loki
+- [ ] Dockerfile for the app
 - [ ] Grafana dashboards: RED metrics, Node.js runtime, logs
 - [ ] Alerting rules

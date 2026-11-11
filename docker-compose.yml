@@ -23,6 +23,39 @@ services:
       - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
+  loki:
+    image: grafana/loki:latest
+    container_name: pulsewatch-loki
+    ports:
+    - 3100:3100
+    volumes:
+      - ./monitoring/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    command: 
+      - "-config.file=/etc/loki/loki-config.yaml"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: pulsewatch-alloy
+    ports:
+      - 12345:12345 # Alloy UI / pipeline graph
+      - 3500:3500 # Loki push receiver (the Node app sends logs here)
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=generally-available
+      - /etc/alloy/config.alloy
+    depends_on:
+      - loki
+    restart: unless-stopped
+
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:
+  alloy_data:

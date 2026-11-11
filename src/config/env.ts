@@ -21,6 +21,13 @@ const envSchema = z.object({
     .string()
     .regex(/^([a-zA-Z_][a-zA-Z0-9_]*)?$/, "must match [a-zA-Z_][a-zA-Z0-9_]*")
     .default(""),
+  // Base URL of the Grafana Alloy `loki.source.api` receiver (e.g. http://localhost:3500).
+  // Empty/unset disables shipping logs; they still go to stdout.
+  ALLOY_LOGS_URL: z
+    .union([z.literal(""), z.url()])
+    .optional()
+    .transform((value) => value || undefined),
+  ALLOY_LOGS_BATCH_INTERVAL_S: z.coerce.number().positive().default(2),
 });
 
 export type Env = z.infer<typeof envSchema>;

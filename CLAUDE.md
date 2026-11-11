@@ -77,9 +77,12 @@ paths. Use `import type` for type-only imports (enforced by ESLint).
   new metric on `metricsRegistry`, never on the global `register`. Use named imports
   (`import { Counter } from "@prometheus-io/client"`). Metric names and `METRICS_PREFIX` must
   match `[a-zA-Z_:][a-zA-Z0-9_:]*`; a `.` or `-` makes the library throw at startup.
-- `src/modules/simulate/`: deliberate traffic generators (latency, errors, flaky failures,
-  CPU burn, multi-level logs) for testing dashboards and alerts. Keep their behaviour
-  deterministic and controlled by query params.
+- `src/modules/simulate/`: deliberate traffic generators (latency, late responses, timeouts,
+  named error scenarios, flaky failures, random mix, CPU burn, multi-level logs) for testing
+  dashboards and alerts. Keep their behaviour controlled by query params. To add an error
+  scenario, add an entry to `simulate.scenarios.ts`; it is then routed at
+  `/api/v1/simulate/<name>` and included in `/random`. Use `AppError` helpers; the `headers`
+  option sets response headers such as `Retry-After`.
 
 ## Conventions
 

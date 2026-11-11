@@ -58,5 +58,6 @@ export const errorHandler = (
     },
   };
 
+  if (appError.headers) res.set(appError.headers);
   res.status(appError.statusCode).json(body);
 };

@@ -89,13 +89,45 @@ startup by `src/config/env.ts`. If any value is invalid, the process exits immed
 
 ### Simulation: `/api/v1/simulate` (traffic generators for monitoring)
 
-| Method | Path       | Query params                 | Effect                              |
-| ------ | ---------- | ---------------------------- | ----------------------------------- |
-| GET    | `/latency` | `minMs=100&maxMs=1000`       | Responds after a random delay       |
-| GET    | `/error`   | `status=500` (400–599)       | Always fails with the given status  |
-| GET    | `/flaky`   | `failureRate=0.3` (0–1)      | Fails with 500 at the given rate    |
-| GET    | `/cpu`     | `durationMs=500` (max 10000) | Busy-loops, blocking the event loop |
-| GET    | `/logs`    | –                            | Writes one log line at each level   |
+`GET /api/v1/simulate` lists every endpoint below.
+
+**Slow responses**
+
+| Path       | Query params           | Effect                            |
+| ---------- | ---------------------- | --------------------------------- |
+| `/latency` | `minMs=100&maxMs=1000` | 200 after a random delay          |
+| `/late`    | `ms=3000` (max 60000)  | 200 after a fixed delay           |
+| `/timeout` | `ms=5000` (max 60000)  | Waits, then 504 `GATEWAY_TIMEOUT` |
+
+**Error scenarios** (realistic messages; each one is its own route)
+
+| Path            | Status | Code                   | Notes                                       |
+| --------------- | ------ | ---------------------- | ------------------------------------------- |
+| `/unauthorized` | 401    | `UNAUTHORIZED`         | `WWW-Authenticate: Bearer` header           |
+| `/forbidden`    | 403    | `FORBIDDEN`            | "Access denied…" with required/current role |
+| `/not-found`    | 404    | `NOT_FOUND`            |                                             |
+| `/conflict`     | 409    | `CONFLICT`             |                                             |
+| `/validation`   | 422    | `UNPROCESSABLE_ENTITY` | Field-level errors in `details`             |
+| `/rate-limit`   | 429    | `TOO_MANY_REQUESTS`    | `Retry-After: 30`                           |
+| `/server-error` | 500    | `INTERNAL_ERROR`       | Unexpected bug; internal message hidden     |
+| `/bad-gateway`  | 502    | `BAD_GATEWAY`          |                                             |
+| `/unavailable`  | 503    | `SERVICE_UNAVAILABLE`  | `Retry-After: 120`                          |
+| `/error`        | any    | `SIMULATED_ERROR`      | `status=500` (400–599)                      |
+| `/flaky`        | 500    | `FLAKY_FAILURE`        | Fails at `failureRate=0.3` (0–1)            |
+
+**Mixed traffic and load**
+
+| Path      | Query params                     | Effect                                            |
+| --------- | -------------------------------- | ------------------------------------------------- |
+| `/random` | `errorRate=0.2&maxLatencyMs=500` | Random delay, then 200 or a random error scenario |
+| `/cpu`    | `durationMs=500` (max 10000)     | Busy-loops, blocking the event loop               |
+| `/logs`   | –                                | Writes one log line at each level                 |
+
+Generate a steady traffic mix for your dashboards (bash):
+
+```bash
+while true; do curl -s -o /dev/null "localhost:3000/api/v1/simulate/random?errorRate=0.2"; sleep 0.2; done
+```
 
 ### Error format
 

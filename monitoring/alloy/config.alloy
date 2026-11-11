@@ -1,0 +1,53 @@
+// Grafana Alloy pipeline for pulse-watch logs.
+//
+//   Node app (pino-loki) --HTTP push--> loki.source.api --> loki.process --> loki.write --> Loki
+//
+// The app pushes batches in Loki push-API format to :3500 with the stream labels
+// {service, env, level}. Alloy enriches them and forwards them to Loki.
+
+livedebugging {
+  enabled = true // lets you see logs flowing through each component in the UI at :12345
+}
+
+// 1. Receive: Loki-compatible push endpoint (POST /loki/api/v1/push).
+loki.source.api "pulse_watch" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 3500
+  }
+
+  labels = {
+    collector = "alloy",
+  }
+
+  forward_to = [loki.process.pulse_watch.receiver]
+}
+
+// 2. Process: parse the JSON log line and attach per-request values as structured
+//    metadata. They are queryable in LogQL without becoming high-cardinality labels.
+loki.process "pulse_watch" {
+  stage.json {
+    expressions = {
+      request_id  = "req.id",
+      method      = "req.method",
+      status_code = "res.statusCode",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      request_id  = "",
+      method      = "",
+      status_code = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+// 3. Ship: write to Loki over the compose network.
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

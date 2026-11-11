@@ -1,7 +1,16 @@
-import type { Request, Response } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { AppError } from "../../utils/app-error";
 import { sleep } from "../../utils/sleep";
-import type { CpuQuery, ErrorQuery, FlakyQuery, LatencyQuery } from "./simulate.schema";
+import { errorScenarioNames, errorScenarios, type ErrorScenario } from "./simulate.scenarios";
+import type {
+  CpuQuery,
+  ErrorQuery,
+  FlakyQuery,
+  LateQuery,
+  LatencyQuery,
+  RandomQuery,
+  TimeoutQuery,
+} from "./simulate.schema";
 
 /*
  * Traffic generators for exercising the monitoring stack: they produce
@@ -46,6 +55,62 @@ export const simulateCpu = (req: Request, res: Response): void => {
   }
   req.log.warn({ durationMs, iterations }, "simulated CPU burn");
   res.status(200).json({ durationMs, iterations });
+};
+
+/** Responds successfully, but only after a fixed delay. */
+export const simulateLate = async (req: Request, res: Response): Promise<void> => {
+  const { ms } = res.locals.validated.query as LateQuery;
+  await sleep(ms);
+  req.log.info({ delayMs: ms }, "late response sent");
+  res.status(200).json({ ok: true, delayMs: ms });
+};
+
+/** Waits like a slow upstream, then gives up with 504 Gateway Timeout. */
+export const simulateTimeout = async (_req: Request, res: Response): Promise<void> => {
+  const { ms } = res.locals.validated.query as TimeoutQuery;
+  await sleep(ms);
+  throw AppError.gatewayTimeout(`Upstream inventory service did not respond within ${ms}ms`);
+};
+
+/** Builds a handler that always fails with the given scenario. */
+export const simulateScenario =
+  (scenario: ErrorScenario): RequestHandler =>
+  () => {
+    throw errorScenarios[scenario]();
+  };
+
+/** Realistic traffic mix: random latency, then success or a random error scenario. */
+export const simulateRandom = async (req: Request, res: Response): Promise<void> => {
+  const { errorRate, maxLatencyMs } = res.locals.validated.query as RandomQuery;
+  const latencyMs = randomBetween(0, maxLatencyMs);
+  await sleep(latencyMs);
+
+  if (Math.random() < errorRate) {
+    const scenario = errorScenarioNames[randomBetween(0, errorScenarioNames.length - 1)]!;
+    req.log.debug({ scenario }, "random scenario picked");
+    throw errorScenarios[scenario]();
+  }
+
+  res.status(200).json({ ok: true, latencyMs });
+};
+
+/** Lists every simulation endpoint, so it's easy to see what's available. */
+export const simulateIndex = (_req: Request, res: Response): void => {
+  const base = "/api/v1/simulate";
+  res.status(200).json({
+    latency: {
+      latency: `${base}/latency?minMs=100&maxMs=1000`,
+      late: `${base}/late?ms=3000`,
+      timeout: `${base}/timeout?ms=5000`,
+    },
+    errors: {
+      ...Object.fromEntries(errorScenarioNames.map((name) => [name, `${base}/${name}`])),
+      custom: `${base}/error?status=500`,
+      flaky: `${base}/flaky?failureRate=0.3`,
+    },
+    mixed: { random: `${base}/random?errorRate=0.2&maxLatencyMs=500` },
+    load: { cpu: `${base}/cpu?durationMs=500`, logs: `${base}/logs` },
+  });
 };
 
 export const simulateLogs = (req: Request, res: Response): void => {
